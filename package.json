@@ -1,0 +1,20 @@
+{
+  "name": "luxuria-claude-vps",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Agent Claude pe VPS Hetzner care primește bug-uri de la admin Luxuria și propune fix-uri (mod ASCULTAR — nu face PR autonom, propune + cere aprobarea Dan via pagină web).",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.30.1",
+    "@octokit/rest": "^21.0.2",
+    "@supabase/supabase-js": "^2.45.4",
+    "express": "^4.21.1"
+  }
+}

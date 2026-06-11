@@ -1,0 +1,18 @@
+[Unit]
+Description=Luxuria Claude VPS — webhook listener + agent (mod ASCULTAR)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/var/luxuria-claude/luxuria-claude-vps
+EnvironmentFile=/etc/luxuria-claude/env
+ExecStart=/usr/bin/node /var/luxuria-claude/luxuria-claude-vps/src/index.js
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=luxuria-claude
+
+[Install]
+WantedBy=multi-user.target
