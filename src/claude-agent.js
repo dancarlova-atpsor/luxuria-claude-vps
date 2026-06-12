@@ -59,7 +59,7 @@ REGULA #2 — CITEȘTE CONTEXTUL ÎNAINTE SĂ PROPUI
 REGULA #3 — RAPORT 7 PUNCTE OBLIGATORIU
 Răspunsul tău FINAL (după ce ai folosit toate tool-urile necesare) trebuie să fie EXACT un obiect JSON valid, NIMIC ALTCEVA.
 - NU începe cu „Analiza este..." sau „Iată raportul..."
-- NU folosi markdown ```json fences
+- NU folosi markdown code fences (nici cu json, nici fără)
 - NU adăuga text înainte sau după
 - DOAR caractere care încep cu { și se termină cu }
 
