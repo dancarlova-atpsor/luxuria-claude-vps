@@ -3,6 +3,7 @@
 import { getBug, updateBugStatus } from './supabase.js';
 import { createPrFromProposal } from './github.js';
 import { notify } from './ntfy.js';
+import { sendEmailViaLuxuria } from './email.js';
 import { logInfo } from './logger.js';
 
 function esc(s) {
@@ -129,10 +130,15 @@ export async function handleApproval(bugId, action) {
     pr_created_at: new Date().toISOString(),
   });
 
+  const prBody = `✅ Bug "${bug.title}" → ${pr.url}\nRevizuiește și merge când ești gata.`;
   await notify({
     title: 'PR draft creat din bug-fix Claude',
-    body: `✅ Bug "${bug.title}" → ${pr.url}\nRevizuiește și merge când ești gata.`,
+    body: prBody,
     tags: ['white_check_mark'],
+  });
+  void sendEmailViaLuxuria({
+    subject: `Claude pe VPS — PR draft creat: ${bug.title}`,
+    body: prBody,
   });
 
   return { ok: true, message: `PR creat: ${pr.url}`, pr_url: pr.url };

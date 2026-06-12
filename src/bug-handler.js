@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { getBug, updateBugStatus } from './supabase.js';
 import { proposeBugFix } from './claude-agent.js';
 import { notify } from './ntfy.js';
+import { sendEmailViaLuxuria } from './email.js';
 import { logInfo, logError } from './logger.js';
 
 const PROPOSALS_DIR = '/var/luxuria-claude/proposals';
@@ -72,11 +73,16 @@ export async function handleBugWebhook(payload) {
   } catch (err) {
     logError('claude failed', { bugId, error: err.message });
     await updateBugStatus(bugId, 'received', { last_error: err.message });
+    const errBody = `🔴 Bug "${bug.title}" nu a putut fi analizat: ${err.message}. Te rog tratează manual.`;
     await notify({
       title: 'Claude pe VPS - eroare la analiza',
-      body: `🔴 Bug "${bug.title}" nu a putut fi analizat: ${err.message}. Te rog tratează manual.`,
+      body: errBody,
       tags: ['rotating_light'],
       priority: 'high',
+    });
+    void sendEmailViaLuxuria({
+      subject: `Claude pe VPS — EROARE la bug "${bug.title}"`,
+      body: errBody,
     });
     return { ok: false, error: err.message };
   }
@@ -94,10 +100,19 @@ export async function handleBugWebhook(payload) {
 
   // ntfy push spre Dan — TITLU FĂRĂ caractere non-ASCII (Node fetch headers acceptă doar ByteString)
   const approvalUrl = `${process.env.PUBLIC_URL}/aprobare/${bugId}`;
+  const reporterLine = bug.reporter_name
+    ? `${bug.reporter_name}${bug.reporter_role ? ` (${bug.reporter_role})` : ''}`
+    : (bug.reporter_email ?? '?');
+  const notifyBody = `🤖 Bug "${bug.title}"\nRaportat de: ${reporterLine}\nPagina: ${bug.page_url ?? '?'}\nCauza: ${proposal.cauza ?? '(necunoscută)'}\nÎncredere: ${proposal.increderea ?? '?'}\n\nDeschide: ${approvalUrl}`;
   await notify({
     title: 'Claude pe VPS - propunere fix pentru bug',
-    body: `🤖 Bug "${bug.title}"\nCauza: ${proposal.cauza ?? '(necunoscută)'}\nÎncredere: ${proposal.increderea ?? '?'}\n\nDeschide: ${approvalUrl}`,
+    body: notifyBody,
     tags: ['robot'],
+  });
+  // Email paralel (NU blocant — fail silent dacă endpoint Luxuria pică)
+  void sendEmailViaLuxuria({
+    subject: `Claude pe VPS — propunere fix: ${bug.title}`,
+    body: notifyBody,
   });
 
   logInfo('proposal ready', { bugId, mdPath, approvalUrl });
