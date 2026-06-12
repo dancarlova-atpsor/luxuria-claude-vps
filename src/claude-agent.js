@@ -186,14 +186,18 @@ INSTRUCȚIUNI:
 
   const messages = [{ role: 'user', content: userMessage }];
   let iter = 0;
-  const MAX_ITER = 15;
+  const MAX_ITER = 25;
 
   while (iter++ < MAX_ITER) {
+    // La penultima iterație forțez Claude să dea verdict — fără tool-uri.
+    const isLastChance = iter >= MAX_ITER - 1;
     const resp = await aclient().messages.create({
       model: process.env.ANTHROPIC_MODEL || 'claude-opus-4-7',
       max_tokens: 8000,
-      system: SYSTEM_PROMPT,
-      tools: TOOL_DEFS,
+      system: isLastChance
+        ? SYSTEM_PROMPT + '\n\nATENȚIE: Ai folosit deja multe tool-uri. ACUM dă verdictul FINAL ca JSON STRICT (vezi REGULA #3). NU mai folosi tool_use. Cu ce ai aflat — dă cea mai bună propunere posibilă. Dacă nu ești sigur, increderea="mica" + observații.'
+        : SYSTEM_PROMPT,
+      tools: isLastChance ? [] : TOOL_DEFS,
       messages,
     });
 
