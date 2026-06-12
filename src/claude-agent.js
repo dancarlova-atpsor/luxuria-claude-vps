@@ -57,22 +57,31 @@ REGULA #2 — CITEȘTE CONTEXTUL ÎNAINTE SĂ PROPUI
 - Folosește grep_repo pentru a căuta același pattern în alte locuri
 
 REGULA #3 — RAPORT 7 PUNCTE OBLIGATORIU
-La final returnezi JSON STRICT (FĂRĂ markdown wrapping, FĂRĂ comentariu — DOAR JSON valid):
+Răspunsul tău FINAL (după ce ai folosit toate tool-urile necesare) trebuie să fie EXACT un obiect JSON valid, NIMIC ALTCEVA.
+- NU începe cu „Analiza este..." sau „Iată raportul..."
+- NU folosi markdown ```json fences
+- NU adăuga text înainte sau după
+- DOAR caractere care încep cu { și se termină cu }
+
+Schema OBLIGATORIE (folosește exact aceste chei):
 {
   "bug_titlu": "...",
-  "reproducere": "...",        // pași concreți + cod/query relevant
-  "cauza": "...",              // fișier:linie + de ce produce simptomul
-  "alte_locuri": ["..."],      // pattern global — fișiere:linii cu același pattern
-  "fix_propus": "...",         // descriere precisă a modificării (fără diff complet — Dan aplică manual din descriere)
-  "test": "...",               // scenariu minim de reproducere + verdict așteptat
-  "fix_tactic": false,         // dacă DA: include câmpul "follow_up" cu descriere
-  "fisiere_modificate": ["src/path/file.ts:linie"], // listă fișiere afectate
-  "increderea": "alta|medie|mica" // cât de sigur ești de propunere
+  "reproducere": "...",
+  "cauza": "...",
+  "alte_locuri": ["..."],
+  "fix_propus": "...",
+  "test": "...",
+  "fix_tactic": false,
+  "fisiere_modificate": ["src/path/file.ts:linie"],
+  "increderea": "alta|medie|mica"
 }
 
 REGULA #4 — DACĂ NU POȚI ACȚIONA
-- Bug ambiguu / lipsesc date → returnezi { "blocat": true, "ai_nevoie_de": ["..."] }
-- NU inventa fix-uri când nu ești sigur — confidence "mica" e acceptat`;
+- Bug ambiguu / lipsesc date → returnezi JSON: { "blocat": true, "ai_nevoie_de": ["..."], "increderea": "mica" }
+- Bug fals (nu reproduc nimic) → returnezi JSON cu increderea="mica" + fix_propus="(nu am identificat un bug real în cod)" + completezi celelalte câmpuri cu observațiile tale
+
+REGULA #5 — JSON FALLBACK
+Dacă ai răspuns deja cu text liber și acum primești mesaj „Reformatează ca JSON", răspunzi DOAR cu JSON valid (vezi schema #3). Nu mai explici, nu mai adaugi text.`;
 
 const TOOL_DEFS = [
   {
@@ -191,16 +200,32 @@ INSTRUCȚIUNI:
     if (resp.stop_reason === 'end_turn' || resp.stop_reason === 'stop_sequence') {
       const textBlock = resp.content.find((b) => b.type === 'text');
       const text = textBlock?.text ?? '';
-      // Înlăturăm eventuale markdown-fences ```json ... ```
-      const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
-      try {
-        const json = JSON.parse(cleaned);
+      const parsed = tryParseJson(text);
+      if (parsed) {
         logInfo('claude-agent: proposal ready', { bugId: bug.id, iters: iter });
-        return json;
-      } catch {
-        logWarn('claude-agent: response not JSON, returning raw', { bugId: bug.id, preview: text.slice(0, 200) });
-        return { raw_response: text };
+        return parsed;
       }
+      // Fallback: cer Claude să REFORMATEZE răspunsul ca JSON valid (1 round extra)
+      logWarn('claude-agent: response not JSON, retrying with reformat request', { bugId: bug.id, preview: text.slice(0, 200) });
+      messages.push({ role: 'assistant', content: resp.content });
+      messages.push({
+        role: 'user',
+        content: 'Răspunsul anterior nu este JSON valid. Reformatează DOAR ca JSON pur (fără markdown fences, fără text înainte/după) folosind schema din REGULA #3. Începe direct cu { și termină cu }. Dacă nu ai identificat un bug real, folosește increderea="mica" + fix_propus="(nu am identificat bug real în cod)" + completezi celelalte câmpuri cu observațiile tale.',
+      });
+      const retry = await aclient().messages.create({
+        model: process.env.ANTHROPIC_MODEL || 'claude-opus-4-7',
+        max_tokens: 4000,
+        system: SYSTEM_PROMPT,
+        messages,
+      });
+      const retryText = retry.content.find((b) => b.type === 'text')?.text ?? '';
+      const retryParsed = tryParseJson(retryText);
+      if (retryParsed) {
+        logInfo('claude-agent: proposal ready after reformat', { bugId: bug.id });
+        return retryParsed;
+      }
+      logWarn('claude-agent: still not JSON after reformat, wrapping raw', { bugId: bug.id });
+      return wrapRawAsProposal(bug, text);
     }
 
     if (resp.stop_reason === 'tool_use') {
@@ -220,4 +245,30 @@ INSTRUCȚIUNI:
   }
 
   return { error: 'max iterations reached', iters: iter };
+}
+
+function tryParseJson(text) {
+  if (!text || typeof text !== 'string') return null;
+  // Înlăturăm markdown fences ```json ... ``` + text înainte/după primul { ... ultimul }
+  let cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
+  const first = cleaned.indexOf('{');
+  const last  = cleaned.lastIndexOf('}');
+  if (first >= 0 && last > first) cleaned = cleaned.slice(first, last + 1);
+  try { return JSON.parse(cleaned); } catch { return null; }
+}
+
+function wrapRawAsProposal(bug, text) {
+  // Fallback ultim: împachetăm răspunsul brut într-o propunere cu confidence mica.
+  return {
+    bug_titlu: bug.title,
+    reproducere: '(Claude nu a putut returna raport structurat — vezi text brut în fix_propus)',
+    cauza: '(neidentificată — răspuns nestructurat)',
+    alte_locuri: [],
+    fix_propus: text || '(răspuns gol)',
+    test: '(neprecizat)',
+    fix_tactic: false,
+    fisiere_modificate: [],
+    increderea: 'mica',
+    raw_response: text,
+  };
 }

@@ -29,6 +29,8 @@ function shortId(uuid) {
 export async function createPrFromProposal(bug, proposal) {
   const { owner, repo } = repoCoords();
   const gh = client();
+  // bug.reporter_name (schema reală) — fallback la reporter_email pentru compatibilitate
+  if (!bug.reporter_display) bug.reporter_display = bug.reporter_name ?? bug.reporter_email ?? '?';
 
   // 1. Obținem SHA-ul HEAD-ului main
   const { data: mainRef } = await gh.git.getRef({ owner, repo, ref: 'heads/main' });
@@ -75,10 +77,10 @@ function renderPrBody(bug, proposal) {
   const fisiere = (proposal.fisiere_modificate ?? []).map((x) => `- \`${x}\``).join('\n') || '_(neprecizate)_';
   return `## 🐞 Bug raportat de coleg
 
-- **Raportat de:** ${bug.reporter_email ?? '?'}
+- **Raportat de:** ${bug.reporter_name ?? bug.reporter_email ?? '?'}${bug.reporter_role ? ` (${bug.reporter_role})` : ''}
 - **Pagina:** ${bug.page_url ?? '?'}
 - **Descriere:** ${bug.description ?? ''}
-${bug.screenshot_url ? `- **Screenshot:** ${bug.screenshot_url}` : ''}
+${bug.screenshot_path ? `- **Screenshot:** ${bug.screenshot_path}` : ''}
 
 ## 📋 Propunere Claude (mod ASCULTAR — analizată dar NU aplicată)
 

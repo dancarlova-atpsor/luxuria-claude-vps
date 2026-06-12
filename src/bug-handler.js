@@ -15,13 +15,14 @@ function ensureProposalsDir() {
 
 function renderProposalMd(bug, proposal) {
   const dt = new Date().toISOString();
+  const reporter = bug.reporter_name ?? bug.reporter_email ?? '?';
   return `# Propunere fix bug ${bug.id}
 
 > Generat de Claude la ${dt}
 
 ## Bug
 - Titlu: ${bug.title}
-- Raportat de: ${bug.reporter_email ?? '?'}
+- Raportat de: ${reporter}${bug.reporter_role ? ` (${bug.reporter_role})` : ''}
 - Pagina: ${bug.page_url ?? '?'}
 - Descriere:
 ${bug.description}
@@ -72,8 +73,8 @@ export async function handleBugWebhook(payload) {
     logError('claude failed', { bugId, error: err.message });
     await updateBugStatus(bugId, 'received', { last_error: err.message });
     await notify({
-      title: '🔴 Claude pe VPS — eroare la analiză',
-      body: `Bug "${bug.title}" nu a putut fi analizat: ${err.message}. Te rog tratează manual.`,
+      title: 'Claude pe VPS - eroare la analiza',
+      body: `🔴 Bug "${bug.title}" nu a putut fi analizat: ${err.message}. Te rog tratează manual.`,
       tags: ['rotating_light'],
       priority: 'high',
     });
@@ -91,11 +92,11 @@ export async function handleBugWebhook(payload) {
     proposed_at: new Date().toISOString(),
   });
 
-  // ntfy push spre Dan
+  // ntfy push spre Dan — TITLU FĂRĂ caractere non-ASCII (Node fetch headers acceptă doar ByteString)
   const approvalUrl = `${process.env.PUBLIC_URL}/aprobare/${bugId}`;
   await notify({
-    title: '🤖 Claude pe VPS — propunere fix pentru bug',
-    body: `Bug "${bug.title}"\nCauza: ${proposal.cauza ?? '(necunoscută)'}\nÎncredere: ${proposal.increderea ?? '?'}\n\nDeschide: ${approvalUrl}`,
+    title: 'Claude pe VPS - propunere fix pentru bug',
+    body: `🤖 Bug "${bug.title}"\nCauza: ${proposal.cauza ?? '(necunoscută)'}\nÎncredere: ${proposal.increderea ?? '?'}\n\nDeschide: ${approvalUrl}`,
     tags: ['robot'],
   });
 

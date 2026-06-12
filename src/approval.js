@@ -62,10 +62,10 @@ button{font-size:16px;padding:14px 28px;border-radius:8px;border:0;cursor:pointe
 <p style="font-size:18px"><strong>${esc(bug.title)}</strong></p>
 <p>Status: ${statusBadge}</p>
 
-<div class="row"><strong>Raportat de</strong><span>${esc(bug.reporter_email ?? '?')}</span></div>
+<div class="row"><strong>Raportat de</strong><span>${esc(bug.reporter_name ?? bug.reporter_email ?? '?')}${bug.reporter_role ? ` <em style="color:#94a3b8">(${esc(bug.reporter_role)})</em>` : ''}</span></div>
 <div class="row"><strong>Pagina</strong><span>${esc(bug.page_url ?? '?')}</span></div>
 <div class="row"><strong>Descriere</strong><span>${esc(bug.description ?? '')}</span></div>
-${bug.screenshot_url ? `<div class="row"><strong>Screenshot</strong><span><a href="${esc(bug.screenshot_url)}" target="_blank">deschide</a></span></div>` : ''}
+${bug.screenshot_path ? `<div class="row"><strong>Screenshot</strong><span><a href="${esc(bug.screenshot_path)}" target="_blank">deschide</a></span></div>` : ''}
 
 <h2>📋 Propunere Claude</h2>
 <div class="row"><strong>Reproducere</strong><span>${esc(prop.reproducere ?? '?')}</span></div>
@@ -130,8 +130,8 @@ export async function handleApproval(bugId, action) {
   });
 
   await notify({
-    title: '✅ PR draft creat din bug-fix Claude',
-    body: `Bug "${bug.title}" → ${pr.url}\nRevizuiește și merge când ești gata.`,
+    title: 'PR draft creat din bug-fix Claude',
+    body: `✅ Bug "${bug.title}" → ${pr.url}\nRevizuiește și merge când ești gata.`,
     tags: ['white_check_mark'],
   });
 
