@@ -1,10 +1,57 @@
 // Pagina de aprobare + acțiune.
+// Dan 15 iun: AUTO-MERGE pentru bug-uri safe (B+C). Vezi shouldAutoMerge() criterii.
 
 import { getBug, updateBugStatus } from './supabase.js';
-import { createPrFromProposal } from './github.js';
+import { createPrFromProposal, mergePr } from './github.js';
 import { notify } from './ntfy.js';
 import { sendEmailViaLuxuria } from './email.js';
-import { logInfo } from './logger.js';
+import { logInfo, logWarn } from './logger.js';
+
+/**
+ * Dan 15 iun B+C: criterii STRICTE pentru auto-merge fără aprobare umană.
+ * Returnează { safe: boolean, reasons: string[] } — reasons enumeră de ce NU e safe.
+ *
+ * Criterii (TOATE trebuie să fie true):
+ *   1. severity bug ≤ normal (NU urgent/high)
+ *   2. edits aplicate efectiv (NU placeholder)
+ *   3. ≤ 2 fișiere modificate
+ *   4. increderea === "alta"
+ *   5. fix_tactic === false
+ *   6. NU atinge zone critice (Netopia, SmartBill, cron, internal API)
+ */
+const CRITICAL_PATH_PREFIXES = [
+  'src/lib/netopia/',
+  'src/lib/smartbill/',
+  'src/app/api/cron/',
+  'src/app/api/internal/',
+  'src/app/api/netopia/',
+  'src/app/api/smartbill/',
+  'src/app/api/webhook/',
+  'middleware.ts',
+  'next.config',
+  '.env',
+  'package.json',
+  'pnpm-lock.yaml',
+];
+
+function shouldAutoMerge(bug, proposal, prResult) {
+  const reasons = [];
+  const severity = String(bug.severity ?? 'normal').toLowerCase();
+  if (!['low', 'normal'].includes(severity)) reasons.push(`severity=${severity} (cere uman pentru urgent/high)`);
+  if (prResult.is_placeholder) reasons.push('PR placeholder (niciun edit aplicat)');
+  if ((prResult.edits_applied ?? 0) === 0) reasons.push('0 edits aplicate');
+  if ((prResult.edits_applied ?? 0) > 2) reasons.push(`${prResult.edits_applied} fișiere modificate (max 2)`);
+  if (prResult.edits_failed && prResult.edits_failed.length > 0) reasons.push(`${prResult.edits_failed.length} edits eșuate`);
+  if (proposal.increderea !== 'alta') reasons.push(`increderea=${proposal.increderea}`);
+  if (proposal.fix_tactic === true) reasons.push('fix_tactic=true');
+  const editPaths = (proposal.edits ?? []).map((e) => e.path);
+  for (const p of editPaths) {
+    if (CRITICAL_PATH_PREFIXES.some((prefix) => p.startsWith(prefix))) {
+      reasons.push(`path critic: ${p}`);
+    }
+  }
+  return { safe: reasons.length === 0, reasons };
+}
 
 function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
