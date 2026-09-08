@@ -19,6 +19,17 @@ function aclient() {
   return anthropic;
 }
 
+/* Dan 8 sept 2026 — DOUA MODELE, dupa analiza cheltuielilor (930 USD / 30 zile, din care 637 USD
+   agentul asta pe Opus; 502 din 629 de tichete analizate au fost respinse ca "nu e bug").
+   - ANALIZA (bucla cu tool-uri: citit fisiere, grep, diagnostic) ruleaza pe SONNET — de ~5 ori
+     mai ieftin, si aici se consuma 95% din tokeni (pana la 40 de iteratii cu fisiere citite).
+   - SCRIEREA EDIT-URILOR pentru PR ruleaza pe OPUS — o singura trecere, doar cand chiar urmeaza
+     un PR real pe repo. Acolo conteaza precizia (search/replace exact), nu volumul.
+   ANTHROPIC_MODEL (vechi) ramane suportat: daca e setat, el devine modelul de analiza. */
+const ANALYSIS_MODEL = process.env.ANTHROPIC_ANALYSIS_MODEL || process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-5-20250929';
+const PR_MODEL = process.env.ANTHROPIC_PR_MODEL || 'claude-opus-4-7';
+const PR_REFINE_MAX_ITER = 3;
+
 let octokit = null;
 function gclient() {
   if (octokit) return octokit;
@@ -238,6 +249,81 @@ async function handleTool(name, input) {
   }
 }
 
+/**
+ * Trecere finala pe OPUS, DOAR cand propunerea chiar duce la un PR real (are edits[]).
+ * Dan 8 sept 2026: analiza sta pe Sonnet (ieftina, multe iteratii), iar aici — unde se scrie
+ * codul care ajunge pe ramura — platim Opus o singura data. Conversatia contine deja fisierele
+ * citite, deci Opus nu trebuie sa reciteasca tot; ii lasam totusi cateva tool-uri, ca sa poata
+ * verifica un fragment exact (search/replace gresit = edit esuat pe GitHub).
+ * Orice esec => pastram propunerea de la Sonnet (fail-safe, niciodata nu pierdem munca facuta).
+ */
+async function refineEditsForPr(bug, messages, assistantContent, proposal) {
+  const edits = Array.isArray(proposal.edits) ? proposal.edits : [];
+  if (edits.length === 0 || proposal.blocat) return proposal;
+  if (PR_MODEL === ANALYSIS_MODEL) return proposal;
+
+  logInfo('claude-agent: refine edits on PR model', { bugId: bug.id, model: PR_MODEL, edits: edits.length });
+  const convo = [
+    ...messages,
+    { role: 'assistant', content: assistantContent },
+    {
+      role: 'user',
+      content:
+        'Diagnosticul de mai sus se pastreaza. Acum esti modelul care SCRIE codul ce ajunge pe ramura ' +
+        'si in PR. Verifica fiecare edit: "search" trebuie sa existe LITERAL in fisier (spatii, tab-uri, ' +
+        'newline-uri identice) — foloseste read_file daca ai cea mai mica indoiala. Corecteaza edit-urile ' +
+        'gresite, scoate-le pe cele inutile, pastreaza fixul la RADACINA (nu tactic). ' +
+        'Raspunde EXACT cu acelasi JSON (schema REGULA #3), cu edits[] finale. Fara markdown, fara text in plus.',
+    },
+  ];
+
+  try {
+    for (let i = 0; i < PR_REFINE_MAX_ITER; i++) {
+      const isLast = i === PR_REFINE_MAX_ITER - 1;
+      const resp = await aclient().messages.create({
+        model: PR_MODEL,
+        max_tokens: 8000,
+        system: SYSTEM_PROMPT,
+        tools: isLast ? [] : TOOL_DEFS,
+        messages: convo,
+      });
+
+      if (resp.stop_reason === 'tool_use') {
+        const toolUses = resp.content.filter((b) => b.type === 'tool_use');
+        convo.push({ role: 'assistant', content: resp.content });
+        const toolResults = await Promise.all(
+          toolUses.map(async (tu) => ({
+            type: 'tool_result',
+            tool_use_id: tu.id,
+            content: JSON.stringify(await handleTool(tu.name, tu.input)),
+          })),
+        );
+        convo.push({ role: 'user', content: toolResults });
+        continue;
+      }
+
+      const text = resp.content.find((b) => b.type === 'text')?.text ?? '';
+      const parsed = tryParseJson(text);
+      if (parsed && Array.isArray(parsed.edits) && parsed.edits.length > 0) {
+        logInfo('claude-agent: edits refined on PR model', {
+          bugId: bug.id,
+          inainte: edits.length,
+          dupa: parsed.edits.length,
+        });
+        return { ...proposal, ...parsed, refined_by: PR_MODEL };
+      }
+      logWarn('claude-agent: PR model nu a dat edits valide, pastrez propunerea de analiza', { bugId: bug.id });
+      return proposal;
+    }
+  } catch (err) {
+    logWarn('claude-agent: refine pe PR model a esuat, pastrez propunerea de analiza', {
+      bugId: bug.id,
+      error: err.message,
+    });
+  }
+  return proposal;
+}
+
 export async function proposeBugFix(bug) {
   const userMessage = `BUG nou raportat de ${bug.reporter_email ?? 'coleg'}:
 
@@ -265,7 +351,7 @@ INSTRUCȚIUNI:
     // La penultima iterație forțez Claude să dea verdict — fără tool-uri.
     const isLastChance = iter >= MAX_ITER - 1;
     const resp = await aclient().messages.create({
-      model: process.env.ANTHROPIC_MODEL || 'claude-opus-4-7',
+      model: ANALYSIS_MODEL,
       max_tokens: 8000,
       system: isLastChance
         ? SYSTEM_PROMPT + '\n\nATENȚIE: Ai folosit deja multe tool-uri. ACUM dă verdictul FINAL ca JSON STRICT (vezi REGULA #3). NU mai folosi tool_use. Cu ce ai aflat — dă cea mai bună propunere posibilă. Dacă nu ești sigur, increderea="mica" + observații.'
@@ -279,8 +365,8 @@ INSTRUCȚIUNI:
       const text = textBlock?.text ?? '';
       const parsed = tryParseJson(text);
       if (parsed) {
-        logInfo('claude-agent: proposal ready', { bugId: bug.id, iters: iter });
-        return parsed;
+        logInfo('claude-agent: proposal ready', { bugId: bug.id, iters: iter, model: ANALYSIS_MODEL });
+        return await refineEditsForPr(bug, messages, resp.content, parsed);
       }
       // Fallback: cer Claude să REFORMATEZE răspunsul ca JSON valid (1 round extra)
       logWarn('claude-agent: response not JSON, retrying with reformat request', { bugId: bug.id, preview: text.slice(0, 200) });
@@ -290,7 +376,7 @@ INSTRUCȚIUNI:
         content: 'Răspunsul anterior nu este JSON valid. Reformatează DOAR ca JSON pur (fără markdown fences, fără text înainte/după) folosind schema din REGULA #3. Începe direct cu { și termină cu }. Dacă nu ai identificat un bug real, folosește increderea="mica" + fix_propus="(nu am identificat bug real în cod)" + completezi celelalte câmpuri cu observațiile tale.',
       });
       const retry = await aclient().messages.create({
-        model: process.env.ANTHROPIC_MODEL || 'claude-opus-4-7',
+        model: ANALYSIS_MODEL,
         max_tokens: 4000,
         system: SYSTEM_PROMPT,
         messages,
@@ -299,7 +385,7 @@ INSTRUCȚIUNI:
       const retryParsed = tryParseJson(retryText);
       if (retryParsed) {
         logInfo('claude-agent: proposal ready after reformat', { bugId: bug.id });
-        return retryParsed;
+        return await refineEditsForPr(bug, messages, retry.content, retryParsed);
       }
       logWarn('claude-agent: still not JSON after reformat, wrapping raw', { bugId: bug.id });
       return wrapRawAsProposal(bug, text);
