@@ -59,26 +59,26 @@ BACKUP="/root/nginx-copii/claude.luxuriatravel.ro-$(date +%Y%m%d-%H%M%S)"
 cp -a "$SITE" "$BACKUP"
 echo "2. Copie de siguranta: $BACKUP"
 
-if grep -q "ratehawk-proxy.conf" "$SITE"; then
-  echo "3. Regula era deja legata in $SITE — nu o mai adaug inca o data."
-else
-  echo "3. Leg regula in blocul care asculta pe 443"
-  awk '
-    BEGIN { vazut443 = 0; pus = 0 }
-    { print }
-    /listen[^;]*443/ { vazut443 = 1 }
-    vazut443 == 1 && pus == 0 && /server_name/ {
-      print "    include /etc/nginx/snippets/ratehawk-proxy.conf;"
-      pus = 1
-    }
-    END { if (pus == 0) exit 3 }
-  ' "$SITE" > "$SITE.nou" || {
-    echo "EROARE: nu am gasit blocul 443 cu server_name. Nu am schimbat nimic."
-    rm -f "$SITE.nou"
-    exit 1
+echo "3. Leg regula la inceputul primului bloc server (cel cu 443)"
+# De ce la inceput, si nu dupa server_name: Certbot adauga liniile `listen 443` la SFARSITUL
+# blocului, dupa location-uri. Cautand `server_name` dupa `listen 443` nimeream in blocul de
+# pe portul 80 — si regula nu se vedea pe https. Patit pe 23 sept 2026.
+# Locatia noastra e o expresie regulata, deci bate `location /` care trimite la aplicatia Node.
+awk '
+  BEGIN { pus = 0 }
+  /ratehawk-proxy.conf/ { next }
+  { print }
+  pus == 0 && $0 ~ /^[[:space:]]*server[[:space:]]*\{/ {
+    print "    include /etc/nginx/snippets/ratehawk-proxy.conf;"
+    pus = 1
   }
-  mv "$SITE.nou" "$SITE"
-fi
+  END { if (pus == 0) exit 3 }
+' "$SITE" > "$SITE.nou" || {
+  echo "EROARE: nu am gasit niciun bloc server. Nu am schimbat nimic."
+  rm -f "$SITE.nou"
+  exit 1
+}
+mv "$SITE.nou" "$SITE"
 
 echo "4. Verific configuratia INAINTE de repornire"
 if ! nginx -t; then
