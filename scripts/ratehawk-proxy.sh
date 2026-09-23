@@ -52,7 +52,10 @@ location ~ ^/api/(b2b|content)/ {
 }
 EOF
 
-BACKUP="$SITE.inainte-de-ratehawk-$(date +%Y%m%d-%H%M%S)"
+# ATENTIE: copia NU se face in sites-enabled — nginx citeste TOT ce e acolo si ar vedea-o ca
+# pe un al doilea site („duplicate listen options"). Pataita pe 23 sept 2026.
+mkdir -p /root/nginx-copii
+BACKUP="/root/nginx-copii/claude.luxuriatravel.ro-$(date +%Y%m%d-%H%M%S)"
 cp -a "$SITE" "$BACKUP"
 echo "2. Copie de siguranta: $BACKUP"
 
