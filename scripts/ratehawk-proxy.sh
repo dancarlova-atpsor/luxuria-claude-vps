@@ -36,7 +36,12 @@ location ~ ^/api/(b2b|content)/ {
     # Poarta: fara antetul nostru, nu trece nimeni.
     if (\$http_x_luxuria_proxy != "$SECRET") { return 403; }
 
-    proxy_pass              https://api.worldota.net;
+    # 3 oct 2026: numele se cauta in DNS LA CERERE (resolver + variabila). Scris direct in
+    # proxy_pass, nginx il cauta la pornire si, daca DNS-ul nu raspunde in clipa aia, refuza
+    # sa porneasca — asa a stat puntea jos 9h30 pe 1 oct si 7h pe 3 oct.
+    resolver                127.0.0.53 185.12.64.1 185.12.64.2 valid=300s ipv6=off;
+    set \$ratehawk_upstream  https://api.worldota.net;
+    proxy_pass              \$ratehawk_upstream;
     proxy_ssl_server_name   on;
     proxy_set_header        Host api.worldota.net;
     proxy_http_version      1.1;
